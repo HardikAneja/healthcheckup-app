@@ -7,7 +7,8 @@ from datetime import datetime
 import os
 from typing import Optional, Dict, Any
 import re
-import pdfplumber
+import PyPDF2
+
 
 
 
@@ -782,17 +783,15 @@ class HealthCheckupAnalyzer:
         if 'openai_api_key' not in st.session_state:
             st.session_state.openai_api_key = ""
 
-    def extract_text_from_pdf(pdf_file) -> str:
+    def extract_text_from_pdf(uploaded_file):
         try:
-            with pdfplumber.open(pdf_file) as pdf:
-                extracted_text = ""
-                for page in pdf.pages:
-                    text = page.extract_text()
-                    if text:
-                        extracted_text += text + "\n"
+            pdf_reader = PyPDF2.PdfReader(uploaded_file)
+            extracted_text = ""
+            for page in pdf_reader.pages:
+                extracted_text += page.extract_text() or ""
             return extracted_text
         except Exception as e:
-            st.error(f"❌ PDF extract karte waqt error aayi: {e}")
+            st.error(f"❌ There is an error while Reading the PDF {e}")
             return ""
 
 
