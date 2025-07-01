@@ -1,13 +1,14 @@
 
 import streamlit as st
 import openai
-import fitz  # PyMuPDF
 import io
 import requests
 from datetime import datetime
 import os
 from typing import Optional, Dict, Any
 import re
+import pdfplumber
+
 
 
 
@@ -781,21 +782,19 @@ class HealthCheckupAnalyzer:
         if 'openai_api_key' not in st.session_state:
             st.session_state.openai_api_key = ""
 
-    def extract_text_from_pdf(self, uploaded_file):
-        import fitz  # PyMuPDF
-
+    def extract_text_from_pdf(pdf_file) -> str:
         try:
-            pdf_bytes = uploaded_file.read()
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-            text = ""
-            for page in doc:
-                text += page.get_text()
-
-            return text.strip()
-
+            with pdfplumber.open(pdf_file) as pdf:
+                extracted_text = ""
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        extracted_text += text + "\n"
+            return extracted_text
         except Exception as e:
-            return f"Error reading PDF: {e}"
+            st.error(f"❌ PDF extract karte waqt error aayi: {e}")
+            return ""
+
 
 
     
