@@ -8,6 +8,25 @@ import os
 from typing import Optional, Dict, Any
 import re
 
+
+
+
+
+# ✅ API key setup (OpenRouter compatible)
+if "openai_api_key" in st.secrets:
+    openai.api_key = st.secrets["openai_api_key"]
+    
+    # 🧠 Tell OpenAI library to use OpenRouter instead of OpenAI
+    openai.api_base = "https://openrouter.ai/api/v1"
+    openai.api_type = "openai"
+    openai.api_version = None
+else:
+    st.warning("⚠️ Setup Required:\nPlease enter your OpenRouter API key in Streamlit secrets.\nYou can get it from: https://openrouter.ai/keys")
+    st.stop()
+
+
+
+
 # Set page configuration
 st.set_page_config(
     page_title="Health Checkup Analyzer",
@@ -69,50 +88,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-class HealthCheckupAnalyzer:
-    def __init__(self):
-        self.setup_openai()
-        self.language_prompts = {
-            "English": "Provide the analysis in clear, professional English.",
-            "Hindi": "कृपया विश्लेषण स्पष्ट और व्यावसायिक हिंदी में प्रदान करें।",
-            "Hinglish": "Please provide the analysis in Hinglish (Hindi-English mix) that's easy to understand for Indian users."
-        }
+
+            
+
+
     
-    def setup_openai(self):
-        """Setup OpenAI API key"""
-        if 'openai_api_key' not in st.session_state:
-            st.session_state.openai_api_key = ""
-    
-    def extract_text_from_pdf(self, pdf_file) -> str:
-        """Extract text from PDF using PyMuPDF"""
-        try:
-            # Read PDF file bytes
-            pdf_bytes = pdf_file.read()
-            
-            # Open PDF document
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            
-            extracted_text = ""
-            page_count = len(doc)
-            
-            # Extract text from each page
-            for page_num in range(page_count):
-                page = doc[page_num]
-                page_text = page.get_text()
-                
-                if page_text.strip():  # Only add non-empty pages
-                    extracted_text += f"\n--- Page {page_num + 1} ---\n"
-                    extracted_text += page_text + "\n"
-            
-            doc.close()
-            
-            return extracted_text.strip()
-            
-        except Exception as e:
-            st.error(f"Error extracting text from PDF: {str(e)}")
-            return ""
-    
-    def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
+def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
         """Analyze health report using OpenAI GPT"""
         try:
             if not st.session_state.openai_api_key:
@@ -123,7 +104,9 @@ class HealthCheckupAnalyzer:
                 st.error("No text extracted from PDF to analyze.")
                 return None
             
-            client = openai.OpenAI(api_key=st.session_state.openai_api_key)
+            import openai
+            openai.api_key = st.session_state.openai_api_key
+
             
             language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
             
@@ -159,8 +142,8 @@ Health Report Text:
 
 Please provide a thorough analysis based on the extracted text content."""
 
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+            response = openai.ChatCompletion.create(
+                model="google/gemma-3-27b-it:free",
                 messages=[
                     {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
                     {"role": "user", "content": prompt}
@@ -186,7 +169,7 @@ Please provide a thorough analysis based on the extracted text content."""
             st.error(f"Error analyzing health report: {str(e)}")
             return None
     
-    def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = "Patient") -> str:
+def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = "Patient") -> str:
         """Create beautiful HTML report that users can print to PDF from browser"""
         try:
             # Process analysis text for better HTML formatting
@@ -618,7 +601,7 @@ Please provide a thorough analysis based on the extracted text content."""
             st.error(f"Error creating HTML report: {str(e)}")
             return None
     
-    def format_analysis_for_html(self, analysis_text: str) -> str:
+def format_analysis_for_html(self, analysis_text: str) -> str:
         """Format the analysis text for better HTML presentation"""
         try:
             # Split into sections based on common patterns
@@ -680,7 +663,6 @@ Please provide a thorough analysis based on the extracted text content."""
             return f"<div class='section'><p>{paragraphs}</p></div>"
     
 
-
 def main():
     analyzer = HealthCheckupAnalyzer()
     
@@ -689,7 +671,7 @@ def main():
     st.markdown('<div class="sub-header">AI-Powered Health Report Analysis with Personalized Recommendations</div>', unsafe_allow_html=True)
     
     # Sidebar
-    with st.sidebar:
+with st.sidebar:
         st.header("⚙️ Configuration")
         
         # OpenAI API Key
@@ -704,9 +686,10 @@ def main():
         # Language selection
         language = st.selectbox(
             "Select Language",
-            ["English", "Hindi", "Hinglish"],
+            ["English", "Hindi"],
             help="Choose the language for analysis output"
         )
+
         
         # Patient name
         patient_name = st.text_input(
@@ -731,7 +714,166 @@ def main():
         - 👀 Live preview
         - 💡 Lifestyle suggestions
         """)
+
+class HealthCheckupAnalyzer:
+
+
+
+    def create_html_report(self, analysis_result: str, patient_name: str) -> str:
+        """यह function एक सुंदर HTML रिपोर्ट तैयार करता है"""
+        html = f"""
+        <html>
+            <head>
+                <style>
+                    body {{
+                        font-family: Arial, sans-serif;
+                        background-color: #f9f9f9;
+                        padding: 20px;
+                        color: #333;
+                    }}
+                    .report {{
+                        background-color: #fff;
+                        padding: 20px;
+                        border-radius: 10px;
+                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                        max-width: 800px;
+                        margin: auto;
+                    }}
+                    .header {{
+                        text-align: center;
+                        margin-bottom: 20px;
+                    }}
+                    .header h2 {{
+                        color: #2E86AB;
+                    }}
+                    .content {{
+                        white-space: pre-wrap;
+                        line-height: 1.6;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="report">
+                    <div class="header">
+                        <h2>Health Report Summary</h2>
+                        <p><strong>Patient Name:</strong> {patient_name}</p>
+                    </div>
+                    <div class="content">
+                        {analysis_result}
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+        return html
+
+
+    def __init__(self):
+        self.setup_openai()
+        self.language_prompts = {
+            "English": "Provide the analysis in clear, professional English.",
+            "Hindi": "कृपया विश्लेषण हिंदी में स्पष्ट और पेशेवर तरीके से दें।",
+            
+        }
+
+    def setup_openai(self):
+        if 'openai_api_key' not in st.session_state:
+            st.session_state.openai_api_key = ""
+
+    def extract_text_from_pdf(self, uploaded_file):
+        import fitz  # PyMuPDF
+
+        try:
+            pdf_bytes = uploaded_file.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            text = ""
+            for page in doc:
+                text += page.get_text()
+
+            return text.strip()
+
+        except Exception as e:
+            return f"Error reading PDF: {e}"
+
+
     
+
+
+    def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
+        try:
+            if not st.session_state.openai_api_key:
+                st.error("Please enter your OpenAI API key in the sidebar.")
+                return None
+
+            if not text or not text.strip():
+                st.error("No text extracted from PDF to analyze.")
+                return None
+
+            import openai
+            openai.api_key = st.session_state.openai_api_key
+
+            language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
+
+            prompt = f"""You are a medical AI assistant specializing in health report analysis.
+
+Please carefully analyze the following health checkup report text and provide:
+
+1. SUMMARY: A comprehensive summary of all test results across all pages
+2. KEY FINDINGS: Important findings and abnormal values (highlight which are outside normal ranges)
+3. HEALTH STATUS: Overall health assessment based on all available data
+4. LIFESTYLE RECOMMENDATIONS: Specific lifestyle changes needed based on the results
+5. DIETARY SUGGESTIONS: Nutritional recommendations tailored to the findings
+6. EXERCISE RECOMMENDATIONS: Physical activity suggestions appropriate for the health status
+7. FOLLOW-UP ACTIONS: Which tests to repeat, when to consult doctors, and urgency levels
+8. PREVENTIVE MEASURES: Steps to prevent future health issues
+
+{language_instruction}
+
+Please analyze the health report text below. Look for:
+
+- Lab test results and reference ranges
+- Vital signs and measurements
+- Any numerical values and their normal ranges
+- Doctor's notes or recommendations
+- Test dates and patient information
+- Abnormal or concerning values
+
+Provide a detailed, structured analysis that's easy to understand for a non-medical person.
+Include specific actionable recommendations with clear priorities.
+If any values are critical or require immediate attention, highlight them clearly.
+
+Health Report Text:
+
+{text}
+"""
+
+            response = openai.ChatCompletion.create(
+                model="google/gemma-3-27b-it:free",
+                messages=[
+                    {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2500,
+                temperature=0.7
+            )
+
+            analysis = response.choices[0].message.content
+            pages_analyzed = text.count("--- Page") if "--- Page" in text else 1
+
+            return {
+                "analysis": analysis,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "language": language,
+                "pages_analyzed": pages_analyzed,
+                "extracted_text_length": len(text)
+            }
+
+        except Exception as e:
+            st.error(f"Error analyzing health report: {str(e)}")
+            return None
+
+
     # Main content
     if not st.session_state.get('openai_api_key'):
         st.markdown("""
@@ -743,35 +885,39 @@ def main():
         """, unsafe_allow_html=True)
     
     # File upload section
-    st.header("📤 Upload Health Report PDF")
-    
-    uploaded_file = st.file_uploader(
-        "Choose your health checkup report (PDF only)",
-        type=['pdf'],
-        help="Upload your health report in PDF format. PyMuPDF will extract text from all pages."
-    )
-    
-    if uploaded_file is not None:
-        # Display file info
-        file_details = {
-            "Filename": uploaded_file.name,
-            "File size": f"{uploaded_file.size} bytes",
-            "File type": uploaded_file.type
-        }
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.subheader("📄 File Details")
-            for key, value in file_details.items():
-                st.write(f"**{key}:** {value}")
-        
-        with col2:
-            st.write("📄 PDF file uploaded successfully")
-            st.info("🤖 PyMuPDF will extract text from all pages for AI analysis!")
+
+st.header("📤 Upload Health Report PDF")
+
+uploaded_file = st.file_uploader(
+    "Choose your health checkup report (PDF only)",
+    type=["pdf"],
+    help="Upload your health report in PDF format. PyMuPDF will extract text from all pages."
+)
+
+# ✅ Wrap everything inside the if block
+if uploaded_file is not None:
+    # Display file info
+    file_details = {
+        "Filename": uploaded_file.name,
+        "File size": f"{uploaded_file.size} bytes",
+        "File type": uploaded_file.type
+    }
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.subheader("📄 File Details")
+        for key, value in file_details.items():
+            st.write(f"**{key}:** {value}")
+
+    with col2:
+        st.write("📄 PDF file uploaded successfully")
+        st.info("🤖 PyMuPDF will extract text from all pages for AI analysis!")
+
         
         # Extract text from PDF
         with st.spinner("📄 Extracting text from PDF..."):
+            analyzer = HealthCheckupAnalyzer()
             extracted_text = analyzer.extract_text_from_pdf(uploaded_file)
         
         if extracted_text and extracted_text.strip():
@@ -809,7 +955,10 @@ def main():
                         st.subheader("📥 Get Your Report")
                         
                         with st.spinner("📄 Generating beautiful HTML report..."):
-                            html_content = analyzer.create_html_report(analysis_result, patient_name)
+                            html_content = analyzer.create_html_report(analysis_result["analysis"], patient_name)
+
+                            st.components.v1.html(html_content, height=600, scrolling=True)
+
                         
                         if html_content:
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
