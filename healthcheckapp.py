@@ -773,7 +773,7 @@ class HealthCheckupAnalyzer:
         self.language_prompts = {
             "English": "Provide the analysis in clear, professional English.",
             "Hindi": "कृपया विश्लेषण हिंदी में स्पष्ट और पेशेवर तरीके से दें।",
-            
+            "Hinglish": "Please provide the analysis in Hinglish (Hindi-English mix) that's easy to understand for Indian users."
         }
 
     def setup_openai(self):

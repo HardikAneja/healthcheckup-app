@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Setup script for Health Checkup Analyzer
-This script helps users install dependencies and check system requirements.
-"""
-
 import subprocess
 import sys
 import os
@@ -149,4 +143,4 @@ if __name__ == "__main__":
         sys.exit(1)
     except Exception as e:
         print(f"\n❌ Setup failed with error: {e}")
-        sys.exit(1) 
+
