@@ -1,32 +1,24 @@
-
 import streamlit as st
 import openai
+import fitz  # PyMuPDF
 import io
 import requests
 from datetime import datetime
 import os
 from typing import Optional, Dict, Any
 import re
-import PyPDF2
+from typing import Dict, Any
 
 
 
 
 
-
-
-# ✅ API key setup (OpenRouter compatible)
+# ✅ API key setup (ye yahi daalna hai)
 if "openai_api_key" in st.secrets:
     openai.api_key = st.secrets["openai_api_key"]
-    
-    # 🧠 Tell OpenAI library to use OpenRouter instead of OpenAI
-    openai.api_base = "https://openrouter.ai/api/v1"
-    openai.api_type = "openai"
-    openai.api_version = None
 else:
-    st.warning("⚠️ Setup Required:\nPlease enter your OpenRouter API key in Streamlit secrets.\nYou can get it from: https://openrouter.ai/keys")
+    st.warning("⚠️ Setup Required:\nPlease enter your OpenAI API key in the sidebar to get started. You can get your API key from [OpenAI Platform](https://platform.openai.com/account/api-keys).")
     st.stop()
-
 
 
 
@@ -96,81 +88,7 @@ st.markdown("""
 
 
     
-def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
-        """Analyze health report using OpenAI GPT"""
-        try:
-            if not st.session_state.openai_api_key:
-                st.error("Please enter your OpenAI API key in the sidebar.")
-                return None
-            
-            if not text or not text.strip():
-                st.error("No text extracted from PDF to analyze.")
-                return None
-            
-            import openai
-            openai.api_key = st.session_state.openai_api_key
 
-            
-            language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
-            
-            prompt = f"""You are a medical AI assistant specializing in health report analysis. 
-
-Please carefully analyze the following health checkup report text and provide:
-
-1. **SUMMARY**: A comprehensive summary of all test results across all pages
-2. **KEY FINDINGS**: Important findings and abnormal values (highlight which are outside normal ranges)
-3. **HEALTH STATUS**: Overall health assessment based on all available data
-4. **LIFESTYLE RECOMMENDATIONS**: Specific lifestyle changes needed based on the results
-5. **DIETARY SUGGESTIONS**: Nutritional recommendations tailored to the findings
-6. **EXERCISE RECOMMENDATIONS**: Physical activity suggestions appropriate for the health status
-7. **FOLLOW-UP ACTIONS**: Which tests to repeat, when to consult doctors, and urgency levels
-8. **PREVENTIVE MEASURES**: Steps to prevent future health issues
-
-{language_instruction}
-
-Please analyze the health report text below. Look for:
-- Lab test results and reference ranges
-- Vital signs and measurements
-- Any numerical values and their normal ranges
-- Doctor's notes or recommendations
-- Test dates and patient information
-- Abnormal or concerning values
-
-Provide a detailed, structured analysis that's easy to understand for a non-medical person.
-Include specific actionable recommendations with clear priorities.
-If any values are critical or require immediate attention, highlight them clearly.
-
-Health Report Text:
-{text}
-
-Please provide a thorough analysis based on the extracted text content."""
-
-            response = openai.ChatCompletion.create(
-                model="google/gemma-3-27b-it:free",
-                messages=[
-                    {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=2500,
-                temperature=0.7
-            )
-            
-            analysis = response.choices[0].message.content
-            
-            # Count pages from text (rough estimate)
-            pages_analyzed = text.count("--- Page") if "--- Page" in text else 1
-            
-            return {
-                "analysis": analysis,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "language": language,
-                "pages_analyzed": pages_analyzed,
-                "extracted_text_length": len(text)
-            }
-            
-        except Exception as e:
-            st.error(f"Error analyzing health report: {str(e)}")
-            return None
     
 def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = "Patient") -> str:
         """Create beautiful HTML report that users can print to PDF from browser"""
@@ -669,6 +587,7 @@ def format_analysis_for_html(self, analysis_text: str) -> str:
 def main():
     analyzer = HealthCheckupAnalyzer()
     
+    
     # Header
     st.markdown('<div class="main-header">🏥 Health Checkup Analyzer</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI-Powered Health Report Analysis with Personalized Recommendations</div>', unsafe_allow_html=True)
@@ -720,79 +639,80 @@ with st.sidebar:
 
 class HealthCheckupAnalyzer:
 
-
-
-    def create_html_report(self, analysis_result: str, patient_name: str) -> str:
-        """यह function एक सुंदर HTML रिपोर्ट तैयार करता है"""
-        html = f"""
-        <html>
-            <head>
-                <style>
-                    body {{
-                        font-family: Arial, sans-serif;
-                        background-color: #f9f9f9;
-                        padding: 20px;
-                        color: #333;
-                    }}
-                    .report {{
-                        background-color: #fff;
-                        padding: 20px;
-                        border-radius: 10px;
-                        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-                        max-width: 800px;
-                        margin: auto;
-                    }}
-                    .header {{
-                        text-align: center;
-                        margin-bottom: 20px;
-                    }}
-                    .header h2 {{
-                        color: #2E86AB;
-                    }}
-                    .content {{
-                        white-space: pre-wrap;
-                        line-height: 1.6;
-                    }}
-                </style>
-            </head>
-            <body>
-                <div class="report">
-                    <div class="header">
-                        <h2>Health Report Summary</h2>
-                        <p><strong>Patient Name:</strong> {patient_name}</p>
-                    </div>
-                    <div class="content">
-                        {analysis_result}
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        return html
-
-
     def __init__(self):
         self.setup_openai()
         self.language_prompts = {
             "English": "Provide the analysis in clear, professional English.",
-            "Hindi": "कृपया विश्लेषण हिंदी में स्पष्ट और पेशेवर तरीके से दें।",
-            "Hinglish": "Please provide the analysis in Hinglish (Hindi-English mix) that's easy to understand for Indian users."
+            "Hindi": "कृपया विश्लेषण हिंदी में स्पष्ट और पेशेवर तरीके से दें।"
+            
         }
 
     def setup_openai(self):
         if 'openai_api_key' not in st.session_state:
             st.session_state.openai_api_key = ""
 
-    def extract_text_from_pdf(uploaded_file):
+    def extract_text_from_pdf(self, uploaded_file):
+        import fitz  # PyMuPDF
+
         try:
-            pdf_reader = PyPDF2.PdfReader(uploaded_file)
-            extracted_text = ""
-            for page in pdf_reader.pages:
-                extracted_text += page.extract_text() or ""
-            return extracted_text
+            pdf_bytes = uploaded_file.read()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+            text = ""
+            for page in doc:
+                text += page.get_text()
+
+            return text.strip()
+
         except Exception as e:
-            st.error(f"❌ There is an error while Reading the PDF {e}")
-            return ""
+            return f"Error reading PDF: {e}"
+        
+    def create_html_report(self, analysis_text, patient_name="Patient"):
+        from datetime import datetime
+
+    # 🛠️ Fix newline formatting
+        formatted_text = analysis_text.replace('\n', '<br>')
+
+        html = f"""
+        <html>
+        <head>
+            <title>Health Report - {patient_name}</title>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    margin: 20px;
+                    background-color: #f9f9f9;
+                    color: #333;
+            }}
+            h1 {{
+                color: #0072C6;
+            }}
+            .section {{
+                margin-bottom: 30px;
+                padding: 20px;
+                background: #fff;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            }}
+        </style>
+    </head>
+    <body>
+        <h1>🏥 Health Report Summary</h1>
+        <div class="section">
+            <strong>👤 Patient Name:</strong> {patient_name}<br>
+            <strong>🕒 Report Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        </div>
+        <div class="section">
+            <h2>📝 AI Diagnosis:</h2>
+            <p>{formatted_text}</p>
+        </div>
+    </body>
+    </html>
+    """
+        return html
+
+
+
 
 
 
@@ -801,63 +721,62 @@ class HealthCheckupAnalyzer:
 
     def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
         try:
-            if not st.session_state.openai_api_key:
-                st.error("Please enter your OpenAI API key in the sidebar.")
+            api_key = st.session_state.openai_api_key if 'openai_api_key' in st.session_state else None
+
+            if not api_key:
+                st.error("❌ Please enter your OpenRouter API key in the sidebar.")
                 return None
 
             if not text or not text.strip():
-                st.error("No text extracted from PDF to analyze.")
+                st.error("⚠️ No text found in PDF to analyze.")
                 return None
-
-            import openai
-            openai.api_key = st.session_state.openai_api_key
 
             language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
 
-            prompt = f"""You are a medical AI assistant specializing in health report analysis.
+            prompt = f"""
+You are a medical AI assistant specializing in health report analysis.
 
 Please carefully analyze the following health checkup report text and provide:
 
-1. SUMMARY: A comprehensive summary of all test results across all pages
-2. KEY FINDINGS: Important findings and abnormal values (highlight which are outside normal ranges)
-3. HEALTH STATUS: Overall health assessment based on all available data
-4. LIFESTYLE RECOMMENDATIONS: Specific lifestyle changes needed based on the results
-5. DIETARY SUGGESTIONS: Nutritional recommendations tailored to the findings
-6. EXERCISE RECOMMENDATIONS: Physical activity suggestions appropriate for the health status
-7. FOLLOW-UP ACTIONS: Which tests to repeat, when to consult doctors, and urgency levels
+1. SUMMARY: A comprehensive summary of all test results across all pages  
+2. KEY FINDINGS: Important findings and abnormal values (highlight which are outside normal ranges)  
+3. HEALTH STATUS: Overall health assessment based on all available data  
+4. LIFESTYLE RECOMMENDATIONS: Specific lifestyle changes needed based on the results  
+5. DIETARY SUGGESTIONS: Nutritional recommendations tailored to the findings  
+6. EXERCISE RECOMMENDATIONS: Physical activity suggestions appropriate for the health status  
+7. FOLLOW-UP ACTIONS: Which tests to repeat, when to consult doctors, and urgency levels  
 8. PREVENTIVE MEASURES: Steps to prevent future health issues
 
 {language_instruction}
 
-Please analyze the health report text below. Look for:
-
-- Lab test results and reference ranges
-- Vital signs and measurements
-- Any numerical values and their normal ranges
-- Doctor's notes or recommendations
-- Test dates and patient information
-- Abnormal or concerning values
-
-Provide a detailed, structured analysis that's easy to understand for a non-medical person.
-Include specific actionable recommendations with clear priorities.
-If any values are critical or require immediate attention, highlight them clearly.
-
 Health Report Text:
-
 {text}
 """
 
-            response = openai.ChatCompletion.create(
-                model="google/gemma-3-27b-it:free",
-                messages=[
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+
+            data = {
+                "model": "google/gemini-2.0-flash-exp:free",
+                "messages": [
                     {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=2500,
-                temperature=0.7
-            )
+                "temperature": 0.7,
+                "max_tokens": 2500
+            }
 
-            analysis = response.choices[0].message.content
+            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+
+            result = response.json()
+
+            if "error" in result:
+                st.error(f"❌ Error analyzing: {result['error']['message']}")
+                return None
+
+            analysis = result["choices"][0]["message"]["content"]
             pages_analyzed = text.count("--- Page") if "--- Page" in text else 1
 
             return {
@@ -869,8 +788,15 @@ Health Report Text:
             }
 
         except Exception as e:
-            st.error(f"Error analyzing health report: {str(e)}")
+            st.error(f"❌ Error analyzing health report: {str(e)}")
             return None
+
+
+
+
+    
+
+
 
 
     # Main content
@@ -930,6 +856,8 @@ if uploaded_file is not None:
                     height=300, 
                     disabled=True
                 )
+
+
                 if len(extracted_text) > 2000:
                     st.info(f"Showing first 2000 characters. Total extracted: {len(extracted_text)} characters")
             
@@ -955,9 +883,6 @@ if uploaded_file is not None:
                         
                         with st.spinner("📄 Generating beautiful HTML report..."):
                             html_content = analyzer.create_html_report(analysis_result["analysis"], patient_name)
-
-                            st.components.v1.html(html_content, height=600, scrolling=True)
-
                         
                         if html_content:
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -998,7 +923,7 @@ if uploaded_file is not None:
                                 st.markdown("*This is how your report will look. Use the 'Download HTML Report' button above to save it.*")
                                 
                                 # Display the HTML in an iframe-like container
-                                st.components.v1.html(html_content, height=800, scrolling=True)
+                                st.components.v1.html(html_content, height=600, scrolling=True)
         else:
             st.error("❌ Could not extract text from PDF. The PDF might be image-based, password-protected, or corrupted. Please ensure the PDF contains extractable text.")
     
