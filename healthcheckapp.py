@@ -8,7 +8,7 @@ import os
 from typing import Optional, Dict, Any
 import re
 from typing import Dict, Any
-
+import PyPDF2
 
 
 
@@ -652,7 +652,7 @@ class HealthCheckupAnalyzer:
             st.session_state.openai_api_key = ""
 
     def extract_text_from_pdf(self, uploaded_file):
-        import fitz  # PyMuPDF
+        from PyPDF2 import PdfReader
 
         try:
             pdf_bytes = uploaded_file.read()
