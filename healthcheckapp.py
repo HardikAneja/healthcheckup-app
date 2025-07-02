@@ -1,6 +1,5 @@
 import streamlit as st
 import openai
-import fitz  # PyMuPDF
 import io
 import requests
 from datetime import datetime
@@ -8,7 +7,7 @@ import os
 from typing import Optional, Dict, Any
 import re
 from typing import Dict, Any
-import PyPDF2
+import pdfplumber
 
 
 
@@ -656,7 +655,7 @@ class HealthCheckupAnalyzer:
 
         try:
             pdf_bytes = uploaded_file.read()
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            doc = pdfplumber.open(stream=pdf_bytes, filetype="pdf")
 
             text = ""
             for page in doc:
