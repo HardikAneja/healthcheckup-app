@@ -1,25 +1,22 @@
 import streamlit as st
 import openai
+import pdfplumber  # PDF text extraction with layout preservation
 import io
 import requests
 from datetime import datetime
 import os
 from typing import Optional, Dict, Any
 import re
-from typing import Dict, Any
-import pdfplumber
 
-
-
-
-# ✅ API key setup (ye yahi daalna hai)
-if "openai_api_key" in st.secrets:
-    openai.api_key = st.secrets["openai_api_key"]
-else:
-    st.warning("⚠️ Setup Required:\nPlease enter your OpenAI API key in the sidebar to get started. You can get your API key from [OpenAI Platform](https://platform.openai.com/account/api-keys).")
-    st.stop()
-
-
+# Clean up any proxy-related environment variables that might interfere
+if 'HTTP_PROXY' in os.environ:
+    del os.environ['HTTP_PROXY']
+if 'HTTPS_PROXY' in os.environ:
+    del os.environ['HTTPS_PROXY']
+if 'http_proxy' in os.environ:
+    del os.environ['http_proxy']
+if 'https_proxy' in os.environ:
+    del os.environ['https_proxy']
 
 # Set page configuration
 st.set_page_config(
@@ -82,14 +79,160 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
+class HealthCheckupAnalyzer:
+    def __init__(self):
+        self.setup_openai()
+        self.language_prompts = {
+            "English": "Provide the analysis in clear, professional English.",
+            "Hindi": "कृपया विश्लेषण स्पष्ट और व्यावसायिक हिंदी में प्रदान करें।",
+            "Hinglish": "Please provide the analysis in Hinglish (Hindi-English mix) that's easy to understand for Indian users."
+        }
+    
+    def setup_openai(self):
+        """Setup OpenAI API key - Always requires user input"""
+        if 'openai_api_key' not in st.session_state:
+            st.session_state.openai_api_key = ""
+        
+        # Clear any existing API key on app restart for security
+        if not st.session_state.openai_api_key:
+            st.session_state.openai_api_key = ""
+    
+    def extract_text_from_pdf(self, pdf_file) -> str:
+        """Extract text from PDF using pdfplumber with layout preservation and table detection"""
+        try:
+            # Read PDF file bytes
+            pdf_bytes = pdf_file.read()
+            extracted_text = ""
             
-
-
+            # Open PDF with pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                page_count = len(pdf.pages)
+                
+                for page_num, page in enumerate(pdf.pages):
+                    # Extract text with layout preservation
+                    page_text = page.extract_text()
+                    
+                    if page_text and page_text.strip():
+                        extracted_text += f"\n--- Page {page_num + 1} ---\n"
+                        extracted_text += page_text + "\n"
+                        
+                        # Also extract tables if any
+                        tables = page.extract_tables()
+                        if tables:
+                            extracted_text += "\n--- Tables on this page ---\n"
+                            for table_num, table in enumerate(tables):
+                                extracted_text += f"Table {table_num + 1}:\n"
+                                for row in table:
+                                    if row and any(cell for cell in row if cell):
+                                        row_text = " | ".join(str(cell) if cell else "" for cell in row)
+                                        extracted_text += row_text + "\n"
+                                extracted_text += "\n"
+            
+            return extracted_text.strip()
+            
+        except Exception as e:
+            st.error(f"Error extracting text from PDF: {str(e)}")
+            return ""    
     
+    def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
+        """Analyze health report using OpenAI GPT"""
+        try:
+            # Validate API key
+            api_key = st.session_state.openai_api_key
+            if not api_key:
+                st.error("🔑 Please enter your OpenAI API key in the sidebar.")
+                return None
+            
+            if not api_key.startswith('sk-') or len(api_key) < 20:
+                st.error("❌ Invalid API key format. Please check your OpenAI API key.")
+                return None
+            
+            if not text or not text.strip():
+                st.error("📄 No text extracted from PDF to analyze.")
+                return None
+            
+            language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
+            
+            prompt = f"""You are a medical AI assistant specializing in health report analysis. 
 
+Please carefully analyze the following health checkup report text and provide:
+
+1. **SUMMARY**: A comprehensive summary of all test results across all pages
+2. **KEY FINDINGS**: Important findings and abnormal values (highlight which are outside normal ranges)
+3. **HEALTH STATUS**: Overall health assessment based on all available data
+4. **LIFESTYLE RECOMMENDATIONS**: Specific lifestyle changes needed based on the results
+5. **DIETARY SUGGESTIONS**: Nutritional recommendations tailored to the findings
+6. **EXERCISE RECOMMENDATIONS**: Physical activity suggestions appropriate for the health status
+7. **FOLLOW-UP ACTIONS**: Which tests to repeat, when to consult doctors, and urgency levels
+8. **PREVENTIVE MEASURES**: Steps to prevent future health issues
+
+{language_instruction}
+
+Please analyze the health report text below. Look for:
+- Lab test results and reference ranges
+- Vital signs and measurements
+- Any numerical values and their normal ranges
+- Doctor's notes or recommendations
+- Test dates and patient information
+- Abnormal or concerning values
+
+Provide a detailed, structured analysis that's easy to understand for a non-medical person.
+Include specific actionable recommendations with clear priorities.
+If any values are critical or require immediate attention, highlight them clearly.
+
+Health Report Text:
+{text}
+
+Please provide a thorough analysis based on the extracted text content."""
+
+            # Use OpenAI API directly with requests to bypass client initialization issues
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": "gpt-3.5-turbo",
+                "messages": [
+                    {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 2500,
+                "temperature": 0.7
+            }
+            
+            # Make the API request
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=60
+            )
+            
+            if response.status_code != 200:
+                st.error(f"OpenAI API error: {response.status_code} - {response.text}")
+                return None
+            
+            response_data = response.json()
+            analysis = response_data['choices'][0]['message']['content']
+            
+            # Count pages from text (rough estimate)
+            pages_analyzed = text.count("--- Page") if "--- Page" in text else 1
+            
+            return {
+                "analysis": analysis,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "language": language,
+                "pages_analyzed": pages_analyzed,
+                "extracted_text_length": len(text)
+            }
+            
+        except Exception as e:
+            st.error(f"Error analyzing health report: {str(e)}")
+            return None
     
-def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = "Patient") -> str:
+    def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = "Patient") -> str:
         """Create beautiful HTML report that users can print to PDF from browser"""
         try:
             # Process analysis text for better HTML formatting
@@ -104,289 +247,399 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>Health Checkup Analysis Report - {patient_name}</title>
                 <style>
-                    /* Print-friendly styles */
+                    /* Medical Report Professional Styles */
+                    :root {{
+                        --primary-blue: #1e40af;
+                        --secondary-blue: #3b82f6;
+                        --success-green: #059669;
+                        --warning-orange: #d97706;
+                        --danger-red: #dc2626;
+                        --info-cyan: #0891b2;
+                        --gray-50: #f9fafb;
+                        --gray-100: #f3f4f6;
+                        --gray-200: #e5e7eb;
+                        --gray-300: #d1d5db;
+                        --gray-600: #4b5563;
+                        --gray-700: #374151;
+                        --gray-800: #1f2937;
+                        --gray-900: #111827;
+                    }}
+                    
+                    /* Print-Optimized Styles */
                     @media print {{
                         @page {{
                             size: A4;
-                            margin: 0.75in;
+                            margin: 0.5in 0.75in;
+                        }}
+                        
+                        * {{
+                            -webkit-print-color-adjust: exact !important;
+                            color-adjust: exact !important;
+                            print-color-adjust: exact !important;
                         }}
                         
                         body {{
-                            font-size: 12pt;
-                            line-height: 1.4;
+                            font-size: 11pt;
+                            line-height: 1.3;
+                            color: #000;
+                            background: white;
                         }}
                         
                         .no-print {{
                             display: none !important;
                         }}
                         
-                        .section {{
+                        .medical-section {{
                             page-break-inside: avoid;
                             break-inside: avoid;
+                            margin-bottom: 20px;
                         }}
                         
-                        .disclaimer {{
-                            page-break-inside: avoid;
+                        .section-header {{
+                            page-break-after: avoid;
+                        }}
+                        
+                        .patient-info {{
+                            page-break-after: avoid;
                         }}
                         
                         .header {{
                             page-break-after: avoid;
                         }}
                         
-                        h1, h2, h3 {{
+                        h1, h2, h3, h4 {{
                             page-break-after: avoid;
+                        }}
+                        
+                        .container {{
+                            box-shadow: none;
+                            border-radius: 0;
+                            margin: 0;
+                            padding: 0;
                         }}
                     }}
                     
-                    /* Screen styles */
+                    /* Base Styles */
+                    * {{
+                        box-sizing: border-box;
+                    }}
+                    
                     body {{
-                        font-family: 'Segoe UI', 'Arial', 'Helvetica', sans-serif;
+                        font-family: 'Inter', 'Segoe UI', 'system-ui', -apple-system, sans-serif;
                         line-height: 1.6;
-                        color: #2c3e50;
+                        color: var(--gray-800);
                         margin: 0;
                         padding: 20px;
-                        background: #f8f9fa;
+                        background: var(--gray-50);
+                        font-size: 14px;
                     }}
                     
                     .container {{
-                        max-width: 210mm;
+                        max-width: 21cm;
                         margin: 0 auto;
                         background: white;
                         padding: 40px;
-                        border-radius: 12px;
-                        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-                    }}
-                    
-                    .print-button {{
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                        border: none;
-                        padding: 15px 25px;
-                        border-radius: 50px;
-                        font-size: 16px;
-                        font-weight: bold;
-                        cursor: pointer;
-                        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                        transition: all 0.3s ease;
-                        z-index: 1000;
-                    }}
-                    
-                    .print-button:hover {{
-                        transform: translateY(-2px);
-                        box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-                    }}
-                    
-                    .header {{
-                        text-align: center;
-                        margin-bottom: 40px;
-                        border-bottom: 4px solid #2E86AB;
-                        padding-bottom: 25px;
+                        border-radius: 8px;
+                        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
                         position: relative;
                     }}
                     
-                    .header::after {{
-                        content: '';
-                        position: absolute;
-                        bottom: -4px;
-                        left: 50%;
-                        transform: translateX(-50%);
-                        width: 100px;
-                        height: 4px;
-                        background: linear-gradient(90deg, #28a745, #17a2b8);
-                        border-radius: 2px;
+                    /* Print Button */
+                    .print-button {{
+                        position: fixed;
+                        top: 30px;
+                        right: 30px;
+                        background: var(--primary-blue);
+                        color: white;
+                        border: none;
+                        padding: 12px 24px;
+                        border-radius: 8px;
+                        font-size: 14px;
+                        font-weight: 600;
+                        cursor: pointer;
+                        box-shadow: 0 4px 12px rgba(30, 64, 175, 0.4);
+                        transition: all 0.2s ease;
+                        z-index: 1000;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                    }}
+                    
+                    .print-button:hover {{
+                        background: #1d4ed8;
+                        transform: translateY(-1px);
+                        box-shadow: 0 6px 16px rgba(30, 64, 175, 0.5);
+                    }}
+                    
+                    /* Header Section */
+                    .header {{
+                        text-align: center;
+                        margin-bottom: 40px;
+                        padding-bottom: 30px;
+                        border-bottom: 3px solid var(--primary-blue);
+                        position: relative;
                     }}
                     
                     .header h1 {{
-                        color: #2E86AB;
-                        font-size: 32px;
-                        margin: 0 0 10px 0;
+                        color: var(--primary-blue);
+                        font-size: 28px;
                         font-weight: 700;
-                        letter-spacing: -1px;
+                        margin: 0 0 8px 0;
+                        letter-spacing: -0.5px;
                     }}
                     
                     .header .subtitle {{
-                        color: #6c757d;
+                        color: var(--gray-600);
                         font-size: 16px;
                         font-weight: 500;
                         margin: 0;
                     }}
                     
+                    /* Patient Information Section */
                     .patient-info {{
-                        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-                        padding: 25px;
-                        border-radius: 15px;
-                        margin: 25px 0;
-                        border: 1px solid #90caf9;
+                        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+                        border: 1px solid #bfdbfe;
+                        padding: 30px;
+                        border-radius: 12px;
+                        margin: 30px 0;
                         position: relative;
-                        overflow: hidden;
-                    }}
-                    
-                    .patient-info::before {{
-                        content: '📋';
-                        position: absolute;
-                        top: 20px;
-                        right: 20px;
-                        font-size: 24px;
-                        opacity: 0.7;
                     }}
                     
                     .patient-info h3 {{
-                        color: #1976d2;
+                        color: var(--primary-blue);
                         margin: 0 0 20px 0;
-                        font-size: 20px;
+                        font-size: 18px;
                         font-weight: 600;
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
                     }}
                     
                     .info-grid {{
                         display: grid;
-                        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                        gap: 15px;
+                        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                        gap: 16px;
                     }}
                     
                     .info-item {{
-                        background: rgba(255,255,255,0.8);
-                        padding: 12px 16px;
+                        background: rgba(255, 255, 255, 0.9);
+                        padding: 16px 20px;
                         border-radius: 8px;
-                        border-left: 4px solid #1976d2;
+                        border-left: 4px solid var(--primary-blue);
+                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
                     }}
                     
                     .info-label {{
                         font-weight: 600;
-                        color: #37474f;
+                        color: var(--gray-700);
                         display: block;
-                        font-size: 14px;
+                        font-size: 12px;
                         margin-bottom: 4px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
                     }}
                     
                     .info-value {{
-                        color: #1976d2;
-                        font-weight: 500;
-                    }}
-                    
-                    .analysis-section {{
-                        margin: 40px 0;
-                    }}
-                    
-                    .analysis-section h2 {{
-                        color: #2E86AB;
-                        font-size: 26px;
-                        border-bottom: 3px solid #2E86AB;
-                        padding-bottom: 12px;
-                        margin-bottom: 25px;
+                        color: var(--primary-blue);
                         font-weight: 600;
-                        position: relative;
+                        font-size: 14px;
                     }}
                     
-                    .analysis-section h2::after {{
-                        content: '📊';
-                        position: absolute;
-                        right: 0;
-                        top: 0;
-                        font-size: 20px;
-                    }}
-                    
-                    .section {{
+                    /* Medical Sections */
+                    .medical-section {{
                         margin: 30px 0;
-                        padding: 25px;
-                        background: #fff;
+                        background: white;
                         border-radius: 12px;
-                        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-                        border-left: 5px solid #28a745;
-                        position: relative;
+                        overflow: hidden;
+                        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                        border: 1px solid var(--gray-200);
                     }}
                     
-                    .section h3 {{
-                        color: #28a745;
-                        font-size: 20px;
-                        margin: 0 0 18px 0;
-                        font-weight: 600;
+                    .section-header {{
+                        padding: 20px 30px;
+                        background: linear-gradient(135deg, var(--gray-50) 0%, white 100%);
+                        border-bottom: 2px solid var(--gray-200);
+                    }}
+                    
+                    .section-header h3 {{
+                        margin: 0;
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: var(--gray-800);
                         display: flex;
                         align-items: center;
-                        gap: 10px;
+                        gap: 12px;
                     }}
                     
-                    .section h4 {{
-                        color: #495057;
+                    .section-icon {{
+                        font-size: 20px;
+                        display: inline-block;
+                    }}
+                    
+                    .section-content {{
+                        padding: 30px;
+                    }}
+                    
+                    /* Section Type Specific Styling */
+                    .medical-section.summary .section-header {{
+                        background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%);
+                        border-bottom-color: var(--info-cyan);
+                    }}
+                    
+                    .medical-section.summary .section-header h3 {{
+                        color: var(--info-cyan);
+                    }}
+                    
+                    .medical-section.findings .section-header {{
+                        background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
+                        border-bottom-color: var(--warning-orange);
+                    }}
+                    
+                    .medical-section.findings .section-header h3 {{
+                        color: var(--warning-orange);
+                    }}
+                    
+                    .medical-section.health-status .section-header {{
+                        background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%);
+                        border-bottom-color: var(--danger-red);
+                    }}
+                    
+                    .medical-section.health-status .section-header h3 {{
+                        color: var(--danger-red);
+                    }}
+                    
+                    .medical-section.lifestyle .section-header,
+                    .medical-section.dietary .section-header,
+                    .medical-section.exercise .section-header {{
+                        background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+                        border-bottom-color: var(--success-green);
+                    }}
+                    
+                    .medical-section.lifestyle .section-header h3,
+                    .medical-section.dietary .section-header h3,
+                    .medical-section.exercise .section-header h3 {{
+                        color: var(--success-green);
+                    }}
+                    
+                    .medical-section.follow-up .section-header,
+                    .medical-section.preventive .section-header {{
+                        background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
+                        border-bottom-color: var(--secondary-blue);
+                    }}
+                    
+                    .medical-section.follow-up .section-header h3,
+                    .medical-section.preventive .section-header h3 {{
+                        color: var(--secondary-blue);
+                    }}
+                    
+                    /* Typography */
+                    .sub-heading {{
+                        color: var(--gray-700);
                         font-size: 16px;
-                        margin: 20px 0 12px 0;
                         font-weight: 600;
+                        margin: 25px 0 15px 0;
+                        padding-bottom: 8px;
+                        border-bottom: 1px solid var(--gray-200);
                     }}
                     
-                    .section p {{
-                        margin: 12px 0;
+                    p {{
+                        margin: 16px 0;
                         line-height: 1.7;
+                        color: var(--gray-700);
                         text-align: justify;
                     }}
                     
-                    /* Section type styling */
-                    .section.summary {{
-                        border-left-color: #17a2b8;
-                        background: linear-gradient(135deg, #e0f7ff 0%, #b3e5fc 100%);
+                    /* Lists */
+                    .medical-list {{
+                        padding-left: 0;
+                        margin: 20px 0;
+                        list-style: none;
                     }}
                     
-                    .section.summary h3 {{
-                        color: #17a2b8;
-                    }}
-                    
-                    .section.findings {{
-                        border-left-color: #ffc107;
-                        background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
-                    }}
-                    
-                    .section.findings h3 {{
-                        color: #f57c00;
-                    }}
-                    
-                    .section.recommendations {{
-                        border-left-color: #28a745;
-                        background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%);
-                    }}
-                    
-                    .section.lifestyle {{
-                        border-left-color: #6f42c1;
-                        background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
-                    }}
-                    
-                    .section.lifestyle h3 {{
-                        color: #6f42c1;
-                    }}
-                    
-                    ul {{
-                        padding-left: 25px;
-                        margin: 15px 0;
-                    }}
-                    
-                    li {{
-                        margin: 10px 0;
-                        line-height: 1.6;
+                    .medical-list li {{
                         position: relative;
-                    }}
-                    
-                    li::marker {{
-                        color: #28a745;
-                        font-weight: bold;
-                    }}
-                    
-                    .highlight {{
-                        background: linear-gradient(120deg, #fff3cd 0%, #ffeaa7 100%);
-                        padding: 3px 6px;
+                        padding: 12px 0 12px 35px;
+                        margin: 8px 0;
+                        line-height: 1.6;
+                        border-left: 3px solid var(--gray-200);
+                        padding-left: 20px;
+                        margin-left: 15px;
+                        background: var(--gray-50);
                         border-radius: 4px;
-                        font-weight: 500;
-                        border: 1px solid #ffc107;
+                        padding: 12px 15px 12px 35px;
+                    }}
+                    
+                    .medical-list li::before {{
+                        content: '▸';
+                        position: absolute;
+                        left: 15px;
+                        top: 12px;
+                        color: var(--success-green);
+                        font-weight: bold;
+                        font-size: 14px;
+                    }}
+                    
+                    /* Medical Value Highlighting */
+                    .medical-value {{
+                        background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
+                        color: var(--warning-orange);
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        font-weight: 600;
+                        font-family: 'Monaco', 'Menlo', monospace;
+                        font-size: 13px;
+                        border: 1px solid #f59e0b;
+                    }}
+                    
+                    .medical-term {{
+                        padding: 2px 6px;
+                        border-radius: 4px;
+                        font-weight: 600;
+                        font-size: 12px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    }}
+                    
+                    .medical-term.high,
+                    .medical-term.elevated,
+                    .medical-term.critical {{
+                        background: #fecaca;
+                        color: var(--danger-red);
+                        border: 1px solid #f87171;
+                    }}
+                    
+                    .medical-term.low,
+                    .medical-term.decreased {{
+                        background: #fed7aa;
+                        color: var(--warning-orange);
+                        border: 1px solid #fb923c;
+                    }}
+                    
+                    .medical-term.normal,
+                    .medical-term.optimal,
+                    .medical-term.good {{
+                        background: #bbf7d0;
+                        color: var(--success-green);
+                        border: 1px solid #4ade80;
+                    }}
+                    
+                    .medical-term.recommended,
+                    .medical-term.maintain {{
+                        background: #dbeafe;
+                        color: var(--primary-blue);
+                        border: 1px solid #60a5fa;
                     }}
                     
                     strong {{
-                        color: #2c3e50;
-                        font-weight: 600;
+                        color: var(--gray-800);
+                        font-weight: 700;
                     }}
                     
+                    /* Disclaimer Section */
                     .disclaimer {{
-                        background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
-                        border: 2px solid #e57373;
-                        padding: 25px;
+                        background: linear-gradient(135deg, #fef2f2 0%, #fecaca 100%);
+                        border: 2px solid #fca5a5;
+                        padding: 30px;
                         border-radius: 12px;
                         margin-top: 50px;
                         position: relative;
@@ -395,14 +648,14 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                     .disclaimer::before {{
                         content: '⚠️';
                         position: absolute;
-                        top: 20px;
-                        right: 20px;
+                        top: 25px;
+                        right: 25px;
                         font-size: 24px;
                     }}
                     
                     .disclaimer h3 {{
-                        color: #c62828;
-                        margin: 0 0 15px 0;
+                        color: var(--danger-red);
+                        margin: 0 0 20px 0;
                         font-size: 18px;
                         font-weight: 700;
                     }}
@@ -410,38 +663,62 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                     .disclaimer p {{
                         margin: 12px 0;
                         font-size: 14px;
-                        line-height: 1.5;
-                        color: #b71c1c;
+                        line-height: 1.6;
+                        color: #7f1d1d;
                     }}
                     
+                    /* Footer */
                     .footer {{
                         text-align: center;
-                        margin-top: 40px;
-                        padding-top: 25px;
-                        border-top: 2px solid #e9ecef;
-                        font-size: 13px;
-                        color: #6c757d;
+                        margin-top: 50px;
+                        padding-top: 30px;
+                        border-top: 2px solid var(--gray-200);
+                        color: var(--gray-600);
                     }}
                     
                     .report-id {{
-                        background: #f8f9fa;
-                        padding: 8px 12px;
+                        background: var(--gray-100);
+                        padding: 8px 16px;
                         border-radius: 6px;
-                        font-family: 'Courier New', monospace;
+                        font-family: 'Monaco', 'Menlo', monospace;
                         font-size: 11px;
-                        margin-top: 10px;
+                        margin-top: 15px;
                         display: inline-block;
+                        color: var(--gray-600);
                     }}
                     
-                    /* Animations */
-                    .section {{
-                        animation: fadeInUp 0.6s ease-out;
+                    /* Responsive Design */
+                    @media (max-width: 768px) {{
+                        .container {{
+                            padding: 20px;
+                            margin: 10px;
+                        }}
+                        
+                        .info-grid {{
+                            grid-template-columns: 1fr;
+                        }}
+                        
+                        .section-content {{
+                            padding: 20px;
+                        }}
+                        
+                        .print-button {{
+                            top: 20px;
+                            right: 20px;
+                            padding: 10px 16px;
+                            font-size: 12px;
+                        }}
                     }}
                     
-                    @keyframes fadeInUp {{
+                    /* Animation */
+                    .medical-section {{
+                        animation: slideInUp 0.6s ease-out;
+                    }}
+                    
+                    @keyframes slideInUp {{
                         from {{
                             opacity: 0;
-                            transform: translateY(30px);
+                            transform: translateY(20px);
                         }}
                         to {{
                             opacity: 1;
@@ -450,13 +727,88 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                     }}
                 </style>
                 <script>
+                    // Print functionality with user feedback
                     function printReport() {{
-                        window.print();
+                        // Show loading state
+                        const button = document.querySelector('.print-button');
+                        const originalText = button.innerHTML;
+                        button.innerHTML = '🔄 Preparing...';
+                        button.disabled = true;
+                        
+                        // Trigger print after short delay
+                        setTimeout(function() {{
+                            window.print();
+                            // Reset button
+                            setTimeout(function() {{
+                                button.innerHTML = originalText;
+                                button.disabled = false;
+                            }}, 1000);
+                        }}, 500);
                     }}
                     
-                    // Add print instructions
+                    // Enhanced print event handling
                     window.addEventListener('beforeprint', function() {{
-                        console.log('Printing... For best results, use "Save as PDF" in print dialog');
+                        console.log('🖨️ Printing Health Report - Use "Save as PDF" for best results');
+                        
+                        // Optimize for print
+                        document.body.style.backgroundColor = 'white';
+                        
+                        // Show print tips
+                        const printTips = document.createElement('div');
+                        printTips.className = 'print-tips no-print';
+                        printTips.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 20px; border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); z-index: 10000; border: 2px solid #3b82f6;';
+                        printTips.innerHTML = '<h4 style="margin: 0 0 10px 0; color: #1e40af;">📄 Print Tips</h4><ul style="margin: 0; padding-left: 20px; font-size: 14px;"><li>Use "Save as PDF" instead of printing</li><li>Select "More settings" → "Background graphics"</li><li>Choose A4 paper size for best layout</li></ul>';
+                        document.body.appendChild(printTips);
+                        
+                        // Remove tips after 3 seconds
+                        setTimeout(function() {{
+                            if (printTips.parentNode) {{
+                                printTips.parentNode.removeChild(printTips);
+                            }}
+                        }}, 3000);
+                    }});
+                    
+                    window.addEventListener('afterprint', function() {{
+                        console.log('✅ Print dialog closed');
+                    }});
+                    
+                    // Smooth scroll to sections (if we add navigation later)
+                    function scrollToSection(sectionId) {{
+                        const element = document.getElementById(sectionId);
+                        if (element) {{
+                            element.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                        }}
+                    }}
+                    
+                    // Add loading animation when page loads
+                    document.addEventListener('DOMContentLoaded', function() {{
+                        // Animate sections on load
+                        const sections = document.querySelectorAll('.medical-section');
+                        sections.forEach(function(section, index) {{
+                            section.style.opacity = '0';
+                            section.style.transform = 'translateY(20px)';
+                            
+                            setTimeout(function() {{
+                                section.style.transition = 'all 0.6s ease-out';
+                                section.style.opacity = '1';
+                                section.style.transform = 'translateY(0)';
+                            }}, index * 200);
+                        }});
+                        
+                        // Add hover effects to medical values
+                        const medicalValues = document.querySelectorAll('.medical-value');
+                        medicalValues.forEach(function(value) {{
+                            value.addEventListener('mouseenter', function() {{
+                                this.style.transform = 'scale(1.05)';
+                                this.style.transition = 'transform 0.2s ease';
+                            }});
+                            
+                            value.addEventListener('mouseleave', function() {{
+                                this.style.transform = 'scale(1)';
+                            }});
+                        }});
+                        
+                        console.log('📊 Health Report loaded successfully');
                     }});
                 </script>
             </head>
@@ -472,7 +824,7 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                     </div>
                     
                     <div class="patient-info">
-                        <h3>Patient Information</h3>
+                        <h3><span class="section-icon">👤</span> Patient Information</h3>
                         <div class="info-grid">
                             <div class="info-item">
                                 <span class="info-label">Patient Name</span>
@@ -488,22 +840,71 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
                             </div>
                             <div class="info-item">
                                 <span class="info-label">Analysis By</span>
-                                <span class="info-value">AI Health Assistant</span>
+                                <span class="info-value">AI Health Assistant (GPT-3.5)</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Pages Analyzed</span>
+                                <span class="info-value">{analysis_data.get('pages_analyzed', 'N/A')}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Text Length</span>
+                                <span class="info-value">{analysis_data.get('extracted_text_length', 0):,} characters</span>
                             </div>
                         </div>
                     </div>
                     
+                    <!-- Executive Summary Box -->
+                    <div class="executive-summary" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border: 2px solid #bbf7d0; padding: 25px; border-radius: 12px; margin: 25px 0;">
+                        <h3 style="color: #059669; margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 20px;">📋</span> Report Overview
+                        </h3>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; font-size: 13px;">
+                            <div><strong>Analysis Scope:</strong> Comprehensive health assessment</div>
+                            <div><strong>Data Source:</strong> Medical report PDF</div>
+                            <div><strong>Processing:</strong> AI-powered analysis</div>
+                            <div><strong>Recommendations:</strong> Lifestyle, dietary, medical</div>
+                        </div>
+                    </div>
+                    
                     <div class="analysis-section">
-                        <h2>Health Analysis & Recommendations</h2>
-                        {analysis_text}
+                        <div class="section-header" style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); padding: 20px 30px; border-bottom: 2px solid #0ea5e9; border-radius: 12px 12px 0 0; margin-bottom: 0;">
+                            <h2 style="margin: 0; font-size: 20px; font-weight: 700; color: #0ea5e9; display: flex; align-items: center; gap: 12px;">
+                                <span class="section-icon">📊</span> Health Analysis & Recommendations
+                            </h2>
+                        </div>
+                        <div style="background: white; border-radius: 0 0 12px 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0; border-top: none;">
+                            {analysis_text}
+                        </div>
                     </div>
                     
                     <div class="disclaimer">
-                        <h3>IMPORTANT MEDICAL DISCLAIMER</h3>
-                        <p><strong>This analysis is generated by artificial intelligence and is for informational purposes only.</strong></p>
-                        <p>This report should <strong>NOT</strong> replace professional medical advice, diagnosis, or treatment. Always seek the advice of qualified healthcare professionals regarding any medical condition or health concerns.</p>
-                        <p><strong>In case of medical emergencies, contact emergency services immediately.</strong></p>
-                        <p>The AI analysis may not identify all health conditions or risks. Regular consultation with healthcare providers is recommended for comprehensive health management.</p>
+                        <h3>⚠️ IMPORTANT MEDICAL DISCLAIMER</h3>
+                        <div style="background: rgba(255,255,255,0.8); padding: 20px; border-radius: 8px; margin: 15px 0;">
+                            <p><strong>🤖 AI-Generated Analysis:</strong> This report is generated by artificial intelligence (GPT-3.5-turbo) and is for <strong>informational purposes only</strong>.</p>
+                            
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin: 20px 0;">
+                                <div style="background: #fef2f2; padding: 15px; border-radius: 6px; border-left: 4px solid #dc2626;">
+                                    <strong style="color: #dc2626;">❌ NOT a Substitute</strong><br>
+                                    <small>This does NOT replace professional medical advice, diagnosis, or treatment.</small>
+                                </div>
+                                <div style="background: #fef3c7; padding: 15px; border-radius: 6px; border-left: 4px solid #d97706;">
+                                    <strong style="color: #d97706;">🏥 Consult Professionals</strong><br>
+                                    <small>Always seek advice from qualified healthcare professionals.</small>
+                                </div>
+                                <div style="background: #fecaca; padding: 15px; border-radius: 6px; border-left: 4px solid #dc2626;">
+                                    <strong style="color: #dc2626;">🚨 Emergencies</strong><br>
+                                    <small>For medical emergencies, contact emergency services immediately.</small>
+                                </div>
+                                <div style="background: #dbeafe; padding: 15px; border-radius: 6px; border-left: 4px solid #3b82f6;">
+                                    <strong style="color: #3b82f6;">🔍 Limitations</strong><br>
+                                    <small>AI may not identify all health conditions or risks.</small>
+                                </div>
+                            </div>
+                            
+                            <p style="text-align: center; margin-top: 20px; font-size: 12px; color: #7f1d1d;">
+                                <strong>Regular consultation with healthcare providers is recommended for comprehensive health management.</strong>
+                            </p>
+                        </div>
                     </div>
                     
                     <div class="footer">
@@ -521,96 +922,242 @@ def create_html_report(self, analysis_data: Dict[str, Any], patient_name: str = 
             st.error(f"Error creating HTML report: {str(e)}")
             return None
     
-def format_analysis_for_html(self, analysis_text: str) -> str:
-        """Format the analysis text for better HTML presentation"""
+    def format_analysis_for_html(self, analysis_text: str) -> str:
+        """Enhanced format analysis text for professional medical report HTML presentation"""
         try:
-            # Split into sections based on common patterns
-            sections = []
-            current_section = ""
+            # Define section mapping with icons and CSS classes
+            section_config = {
+                'SUMMARY': {'icon': '📋', 'class': 'summary', 'title': 'Executive Summary'},
+                'KEY FINDINGS': {'icon': '🔍', 'class': 'findings', 'title': 'Key Findings'},
+                'HEALTH STATUS': {'icon': '💓', 'class': 'health-status', 'title': 'Health Status Assessment'},
+                'LIFESTYLE RECOMMENDATIONS': {'icon': '🏃', 'class': 'lifestyle', 'title': 'Lifestyle Recommendations'},
+                'DIETARY SUGGESTIONS': {'icon': '🥗', 'class': 'dietary', 'title': 'Dietary Suggestions'},
+                'EXERCISE RECOMMENDATIONS': {'icon': '💪', 'class': 'exercise', 'title': 'Exercise Recommendations'},
+                'FOLLOW-UP ACTIONS': {'icon': '🏥', 'class': 'follow-up', 'title': 'Follow-up Actions'},
+                'PREVENTIVE MEASURES': {'icon': '🛡️', 'class': 'preventive', 'title': 'Preventive Measures'}
+            }
             
             lines = analysis_text.split('\n')
+            formatted_sections = []
+            current_section = None
+            current_content = []
             
             for line in lines:
                 line = line.strip()
                 if not line:
                     continue
                 
-                # Check if line is a major heading (contains keywords like SUMMARY, FINDINGS, etc.)
-                if any(keyword in line.upper() for keyword in [
-                    'SUMMARY', 'FINDINGS', 'HEALTH STATUS', 'LIFESTYLE', 'DIETARY', 
-                    'EXERCISE', 'FOLLOW-UP', 'PREVENTIVE', 'RECOMMENDATIONS'
-                ]):
-                    if current_section:
-                        sections.append(current_section)
-                    current_section = f"<div class='section'><h3>{line}</h3>"
+                # Check for section headers
+                section_found = None
+                for key, config in section_config.items():
+                    if key in line.upper() or any(word in line.upper() for word in key.split()):
+                        section_found = key
+                        break
                 
-                # Check if line starts with a number (like "1.", "2.", etc.)
-                elif re.match(r'^\d+\.', line):
-                    if current_section:
-                        sections.append(current_section + "</div>")
-                    current_section = f"<div class='section'><h3>{line}</h3>"
+                # Check for numbered sections (1., 2., etc.)
+                numbered_match = re.match(r'^(\d+\.)\s*(.+)', line)
+                if numbered_match:
+                    number, title = numbered_match.groups()
+                    section_found = title.upper().strip()
                 
-                # Regular content
+                if section_found:
+                    # Save previous section
+                    if current_section and current_content:
+                        formatted_sections.append(self._create_section_html(current_section, current_content, section_config))
+                    
+                    # Start new section
+                    current_section = section_found
+                    current_content = []
                 else:
-                    if line.startswith('-') or line.startswith('•'):
-                        # Convert bullet points to HTML list items
-                        if '<ul>' not in current_section:
-                            current_section += "<ul>"
-                        current_section += f"<li>{line[1:].strip()}</li>"
-                    else:
-                        # Close any open list
-                        if '<ul>' in current_section and '</ul>' not in current_section:
-                            current_section += "</ul>"
-                        current_section += f"<p>{line}</p>"
+                    # Add content to current section
+                    if line:
+                        current_content.append(line)
             
-            # Close the last section
-            if current_section:
-                if '<ul>' in current_section and '</ul>' not in current_section:
-                    current_section += "</ul>"
-                current_section += "</div>"
-                sections.append(current_section)
+            # Add final section
+            if current_section and current_content:
+                formatted_sections.append(self._create_section_html(current_section, current_content, section_config))
             
-            # If no sections were created, format as simple paragraphs
-            if not sections:
-                paragraphs = [f"<p>{para.strip()}</p>" for para in analysis_text.split('\n\n') if para.strip()]
-                return f"<div class='section'>{''.join(paragraphs)}</div>"
+            # If no sections found, create a general analysis section
+            if not formatted_sections:
+                tt = analysis_text.split('\n')
+                return f"""
+                <div class="medical-section general">
+                    <div class="section-header">
+                        <h3><span class="section-icon">📊</span> Health Analysis</h3>
+                    </div>
+                    <div class="section-content">
+                        {self._format_content_to_html(tt)}
+                    </div>
+                </div>
+                """
             
-            return ''.join(sections)
+            return ''.join(formatted_sections)
             
         except Exception as e:
-            # Fallback to simple formatting
-            paragraphs = analysis_text.replace('\n\n', '</p><p>').replace('\n', '<br>')
-            return f"<div class='section'><p>{paragraphs}</p></div>"
+            # Enhanced fallback formatting
+            paragraphs = []
+            for para in analysis_text.split('\n\n'):
+                if para.strip():
+                    formatted_para = para.replace('\n', '<br>')
+                    paragraphs.append(f"<p>{formatted_para}</p>")
+            
+            return f"""
+            <div class="medical-section general">
+                <div class="section-header">
+                    <h3><span class="section-icon">📊</span> Health Analysis</h3>
+                </div>
+                <div class="section-content">
+                    {''.join(paragraphs)}
+                </div>
+            </div>
+            """
     
+    def _create_section_html(self, section_key: str, content_lines: list, section_config: dict) -> str:
+        """Create professional HTML section with proper styling"""
+        # Get section configuration
+        config = section_config.get(section_key, {
+            'icon': '📄', 
+            'class': 'general',
+            'title': section_key.title()
+        })
+        
+        # Format content
+        formatted_content = self._format_content_to_html(content_lines)
+        
+        return f"""
+        <div class="medical-section {config['class']}">
+            <div class="section-header">
+                <h3><span class="section-icon">{config['icon']}</span> {config['title']}</h3>
+            </div>
+            <div class="section-content">
+                {formatted_content}
+            </div>
+        </div>
+        """
+    
+    def _format_content_to_html(self, content_lines: list) -> str:
+        """Format content lines into proper HTML with lists, emphasis, etc."""
+        html_content = []
+        current_list = []
+        in_list = False
+        
+        for line in content_lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check for bullet points
+            if line.startswith('-') or line.startswith('•') or line.startswith('*'):
+                if not in_list:
+                    in_list = True
+                    current_list = []
+                
+                # Clean up bullet point
+                clean_line = line[1:].strip()
+                # Highlight important values and ranges
+                clean_line = self._highlight_medical_values(clean_line)
+                current_list.append(f"<li>{clean_line}</li>")
+            
+            else:
+                # Close current list if we were in one
+                if in_list:
+                    html_content.append(f"<ul class='medical-list'>{''.join(current_list)}</ul>")
+                    current_list = []
+                    in_list = False
+                
+                # Format regular paragraph
+                formatted_line = self._highlight_medical_values(line)
+                
+                # Check if it's a sub-heading
+                if line.isupper() or line.endswith(':'):
+                    html_content.append(f"<h4 class='sub-heading'>{formatted_line}</h4>")
+                else:
+                    html_content.append(f"<p>{formatted_line}</p>")
+        
+        # Close any remaining list
+        if in_list and current_list:
+            html_content.append(f"<ul class='medical-list'>{''.join(current_list)}</ul>")
+        
+        return ''.join(html_content)
+    
+    def _highlight_medical_values(self, text: str) -> str:
+        """Highlight medical values, ranges, and important terms"""
+        # Highlight numerical values and ranges
+        text = re.sub(r'(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?(?:\s*(?:mg|g|kg|lb|cm|mm|%|bpm|mmHg|mg/dL|g/dL|mL|L|units?|IU)\b)?)', 
+                     r'<span class="medical-value">\1</span>', text)
+        
+        # Highlight important medical terms
+        important_terms = [
+            'HIGH', 'LOW', 'NORMAL', 'ABNORMAL', 'CRITICAL', 'URGENT', 'IMMEDIATE',
+            'ELEVATED', 'DECREASED', 'BORDERLINE', 'OPTIMAL', 'GOOD', 'POOR',
+            'RECOMMENDED', 'AVOID', 'INCREASE', 'DECREASE', 'MAINTAIN', 'MONITOR'
+        ]
+        
+        for term in important_terms:
+            text = re.sub(f'\\b{term}\\b', f'<span class="medical-term {term.lower()}">{term}</span>', text, flags=re.IGNORECASE)
+        
+        # Bold important phrases
+        text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
+        
+        return text
+    
+
 
 def main():
     analyzer = HealthCheckupAnalyzer()
-    
     
     # Header
     st.markdown('<div class="main-header">🏥 Health Checkup Analyzer</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">AI-Powered Health Report Analysis with Personalized Recommendations</div>', unsafe_allow_html=True)
     
     # Sidebar
-with st.sidebar:
+    with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # OpenAI API Key
+        # OpenAI API Key Input
+        st.markdown("### 🔐 API Configuration")
+        
         api_key = st.text_input(
             "OpenAI API Key",
             type="password",
             value=st.session_state.get('openai_api_key', ''),
-            help="Enter your OpenAI API key to enable health report analysis"
+            placeholder="sk-proj-...",
+            help="🔑 Enter your OpenAI API key to enable AI analysis"
         )
-        st.session_state.openai_api_key = api_key
+        
+        # API Key validation and feedback
+        if api_key:
+            if api_key.startswith('sk-') and len(api_key) > 20:
+                st.success("✅ API Key format looks valid")
+                st.session_state.openai_api_key = api_key
+            else:
+                st.error("❌ Invalid API key format. Should start with 'sk-'")
+                st.session_state.openai_api_key = ""
+        else:
+            st.session_state.openai_api_key = ""
+            
+        # API Key Instructions
+        if not api_key:
+            st.info("""
+            **🚀 Get Your Free OpenAI API Key:**
+            1. Visit [OpenAI Platform](https://platform.openai.com/api-keys)
+            2. Sign up or log in to your account
+            3. Click "Create new secret key"
+            4. Copy and paste the key above
+            
+            **💰 Cost:** ~$0.01-0.05 per health report analysis
+            """)
+        
+        # Security notice
+        if api_key:
+            st.caption("🔒 Your API key is stored securely in this session only")
         
         # Language selection
         language = st.selectbox(
             "Select Language",
-            ["English", "Hindi"],
+            ["English", "Hindi", "Hinglish"],
             help="Choose the language for analysis output"
         )
-
         
         # Patient name
         patient_name = st.text_input(
@@ -625,223 +1172,52 @@ with st.sidebar:
         st.markdown("""
         ### 🎯 Features
         - 📄 Upload PDF health reports
-        - 🔤 PyMuPDF text extraction
+        - 🔤 **pdfplumber extraction**: Superior layout preservation
+        - 📊 **Automatic table detection** and extraction
         - 🤖 GPT-3.5-turbo analysis
         - 🌐 Multi-language support  
-        - 📊 Multi-page text analysis
-        - 📋 Detailed recommendations
+        - 📋 Multi-page text analysis
+        - 💡 Detailed recommendations
         - 📄 Beautiful HTML reports
         - 🖨️ Print-to-PDF ready
         - 👀 Live preview
-        - 💡 Lifestyle suggestions
         """)
-
-class HealthCheckupAnalyzer:
-
-    def __init__(self):
-        self.setup_openai()
-        self.language_prompts = {
-            "English": "Provide the analysis in clear, professional English.",
-            "Hindi": "कृपया विश्लेषण हिंदी में स्पष्ट और पेशेवर तरीके से दें।"
-            
-        }
-
-    def setup_openai(self):
-        if 'openai_api_key' not in st.session_state:
-            st.session_state.openai_api_key = ""
-
-    def extract_text_from_pdf(self, uploaded_file):
-        from PyPDF2 import PdfReader
-
-        try:
-            pdf_bytes = uploaded_file.read()
-            doc = pdfplumber.open(stream=pdf_bytes, filetype="pdf")
-
-            text = ""
-            for page in doc:
-                text += page.get_text()
-
-            return text.strip()
-
-        except Exception as e:
-            return f"Error reading PDF: {e}"
         
-    def create_html_report(self, analysis_text, patient_name="Patient"):
-        from datetime import datetime
-
-    # 🛠️ Fix newline formatting
-        formatted_text = analysis_text.replace('\n', '<br>')
-
-        html = f"""
-        <html>
-        <head>
-            <title>Health Report - {patient_name}</title>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    margin: 20px;
-                    background-color: #f9f9f9;
-                    color: #333;
-            }}
-            h1 {{
-                color: #0072C6;
-            }}
-            .section {{
-                margin-bottom: 30px;
-                padding: 20px;
-                background: #fff;
-                border-radius: 8px;
-                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            }}
-        </style>
-    </head>
-    <body>
-        <h1>🏥 Health Report Summary</h1>
-        <div class="section">
-            <strong>👤 Patient Name:</strong> {patient_name}<br>
-            <strong>🕒 Report Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        </div>
-        <div class="section">
-            <h2>📝 AI Diagnosis:</h2>
-            <p>{formatted_text}</p>
-        </div>
-    </body>
-    </html>
-    """
-        return html
-
-
-
-
-
-
+        # Extraction method info
+        st.info("📊 pdfplumber provides excellent layout preservation and table detection!")
     
-
-
-    def analyze_health_report(self, text: str, language: str) -> Dict[str, Any]:
-        try:
-            api_key = st.session_state.openai_api_key if 'openai_api_key' in st.session_state else None
-
-            if not api_key:
-                st.error("❌ Please enter your OpenRouter API key in the sidebar.")
-                return None
-
-            if not text or not text.strip():
-                st.error("⚠️ No text found in PDF to analyze.")
-                return None
-
-            language_instruction = self.language_prompts.get(language, self.language_prompts["English"])
-
-            prompt = f"""
-You are a medical AI assistant specializing in health report analysis.
-
-Please carefully analyze the following health checkup report text and provide:
-
-1. SUMMARY: A comprehensive summary of all test results across all pages  
-2. KEY FINDINGS: Important findings and abnormal values (highlight which are outside normal ranges)  
-3. HEALTH STATUS: Overall health assessment based on all available data  
-4. LIFESTYLE RECOMMENDATIONS: Specific lifestyle changes needed based on the results  
-5. DIETARY SUGGESTIONS: Nutritional recommendations tailored to the findings  
-6. EXERCISE RECOMMENDATIONS: Physical activity suggestions appropriate for the health status  
-7. FOLLOW-UP ACTIONS: Which tests to repeat, when to consult doctors, and urgency levels  
-8. PREVENTIVE MEASURES: Steps to prevent future health issues
-
-{language_instruction}
-
-Health Report Text:
-{text}
-"""
-
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-
-            data = {
-                "model": "google/gemini-2.0-flash-exp:free",
-                "messages": [
-                    {"role": "system", "content": "You are a helpful medical AI assistant that provides health report analysis and recommendations."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 2500
-            }
-
-            response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-
-            result = response.json()
-
-            if "error" in result:
-                st.error(f"❌ Error analyzing: {result['error']['message']}")
-                return None
-
-            analysis = result["choices"][0]["message"]["content"]
-            pages_analyzed = text.count("--- Page") if "--- Page" in text else 1
-
-            return {
-                "analysis": analysis,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "language": language,
-                "pages_analyzed": pages_analyzed,
-                "extracted_text_length": len(text)
-            }
-
-        except Exception as e:
-            st.error(f"❌ Error analyzing health report: {str(e)}")
-            return None
-
-
-
-
-    
-
-
-
-
-    # Main content
-    if not st.session_state.get('openai_api_key'):
-        st.markdown("""
-        <div class="warning-box">
-            <b>⚠️ Setup Required:</b><br/>
-            Please enter your OpenAI API key in the sidebar to get started.
-            You can get your API key from <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI Platform</a>.
-        </div>
-        """, unsafe_allow_html=True)
+    # Main content - Continue without blocking if no API key
     
     # File upload section
-
-st.header("📤 Upload Health Report PDF")
-
-uploaded_file = st.file_uploader(
-    "Choose your health checkup report (PDF only)",
-    type=["pdf"],
-    help="Upload your health report in PDF format. PyMuPDF will extract text from all pages."
-)
-
-# ✅ Wrap everything inside the if block
-if uploaded_file is not None:
-    # Display file info
-    file_details = {
-        "Filename": uploaded_file.name,
-        "File size": f"{uploaded_file.size} bytes",
-        "File type": uploaded_file.type
-    }
-
-    col1, col2 = st.columns([1, 2])
-
-    with col1:
-        st.subheader("📄 File Details")
-        for key, value in file_details.items():
-            st.write(f"**{key}:** {value}")
-
-    with col2:
-        st.write("📄 PDF file uploaded successfully")
-        st.info("🤖 PyMuPDF will extract text from all pages for AI analysis!")
-
+    st.header("📤 Upload Health Report PDF")
+    
+    uploaded_file = st.file_uploader(
+        "Choose your health checkup report (PDF only)",
+        type=['pdf'],
+        help="Upload your health report in PDF format. pdfplumber will extract text and tables from all pages."
+    )
+    
+    if uploaded_file is not None:
+        # Display file info
+        file_details = {
+            "Filename": uploaded_file.name,
+            "File size": f"{uploaded_file.size} bytes",
+            "File type": uploaded_file.type
+        }
         
-        # Extract text from PDF
-        with st.spinner("📄 Extracting text from PDF..."):
-            analyzer = HealthCheckupAnalyzer()
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.subheader("📄 File Details")
+            for key, value in file_details.items():
+                st.write(f"**{key}:** {value}")
+        
+        with col2:
+            st.write("📄 PDF file uploaded successfully")
+            st.info("🤖 pdfplumber will extract text and tables from all pages for AI analysis!")
+        
+        # Extract text from PDF using pdfplumber
+        with st.spinner("📄 Extracting text and tables from PDF using pdfplumber..."):
             extracted_text = analyzer.extract_text_from_pdf(uploaded_file)
         
         if extracted_text and extracted_text.strip():
@@ -855,8 +1231,6 @@ if uploaded_file is not None:
                     height=300, 
                     disabled=True
                 )
-
-
                 if len(extracted_text) > 2000:
                     st.info(f"Showing first 2000 characters. Total extracted: {len(extracted_text)} characters")
             
@@ -881,7 +1255,7 @@ if uploaded_file is not None:
                         st.subheader("📥 Get Your Report")
                         
                         with st.spinner("📄 Generating beautiful HTML report..."):
-                            html_content = analyzer.create_html_report(analysis_result["analysis"], patient_name)
+                            html_content = analyzer.create_html_report(analysis_result, patient_name)
                         
                         if html_content:
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -922,7 +1296,7 @@ if uploaded_file is not None:
                                 st.markdown("*This is how your report will look. Use the 'Download HTML Report' button above to save it.*")
                                 
                                 # Display the HTML in an iframe-like container
-                                st.components.v1.html(html_content, height=600, scrolling=True)
+                                st.components.v1.html(html_content, height=800, scrolling=True)
         else:
             st.error("❌ Could not extract text from PDF. The PDF might be image-based, password-protected, or corrupted. Please ensure the PDF contains extractable text.")
     
